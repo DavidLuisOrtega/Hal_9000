@@ -1,8 +1,8 @@
 class Chatbot {
     constructor() {
         this.openaiApiKey = '';
-        this.elevenLabsApiKey = '';
-        this.voiceId = '';
+        this.elevenLabsApiKey = 'sk_0ad8934840d686d2a7abab86c98544507d1f90fa00d159e9'; // Hardcoded
+        this.voiceId = 'sos6t4F82ZagrStqD8Ra'; // Hardcoded
         this.isProcessing = false;
         this.conversationHistory = [];
         this.init();
@@ -34,10 +34,8 @@ class Chatbot {
 
     loadApiKeys() {
         this.openaiApiKey = localStorage.getItem('openaiApiKey') || '';
-        this.elevenLabsApiKey = localStorage.getItem('elevenLabsApiKey') || '';
-        this.voiceId = localStorage.getItem('voiceId') || '';
 
-        if (!this.openaiApiKey || !this.elevenLabsApiKey || !this.voiceId) {
+        if (!this.openaiApiKey) {
             this.showConfigPrompt();
         }
     }
@@ -74,11 +72,9 @@ class Chatbot {
         configOverlay.innerHTML = `
             <div class="config-content">
                 <h3>API Configuration Required</h3>
-                <p>Please enter your API keys to get started:</p>
+                <p>Please enter your OpenAI API key to get started:</p>
                 <div class="config-inputs">
                     <input type="password" id="openai-key" placeholder="OpenAI API Key" value="${this.openaiApiKey}">
-                    <input type="password" id="elevenlabs-key" placeholder="ElevenLabs API Key" value="${this.elevenLabsApiKey}">
-                    <input type="text" id="voice-id" placeholder="ElevenLabs Voice ID" value="${this.voiceId}">
                     <button onclick="chatbot.saveConfig()">Save Configuration</button>
                 </div>
             </div>
@@ -88,12 +84,8 @@ class Chatbot {
 
     saveConfig() {
         this.openaiApiKey = document.getElementById('openai-key').value;
-        this.elevenLabsApiKey = document.getElementById('elevenlabs-key').value;
-        this.voiceId = document.getElementById('voice-id').value;
 
         localStorage.setItem('openaiApiKey', this.openaiApiKey);
-        localStorage.setItem('elevenLabsApiKey', this.elevenLabsApiKey);
-        localStorage.setItem('voiceId', this.voiceId);
 
         // Remove the config overlay
         const configOverlay = document.querySelector('.config-overlay');
@@ -111,8 +103,8 @@ class Chatbot {
 
         if (!message) return;
 
-        if (!this.openaiApiKey || !this.elevenLabsApiKey || !this.voiceId) {
-            this.showStatus('Please configure your API keys first.');
+        if (!this.openaiApiKey) {
+            this.showStatus('Please configure your OpenAI API key first.');
             return;
         }
 
