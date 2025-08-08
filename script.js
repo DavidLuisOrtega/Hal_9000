@@ -4,12 +4,14 @@ class Chatbot {
         this.elevenLabsApiKey = '';
         this.voiceId = '';
         this.isProcessing = false;
+        this.conversationHistory = [];
         this.init();
     }
 
     init() {
         this.setupEventListeners();
         this.loadApiKeys();
+        this.loadConversationHistory();
         // Don't show initial status message
     }
 
@@ -38,6 +40,31 @@ class Chatbot {
         if (!this.openaiApiKey || !this.elevenLabsApiKey || !this.voiceId) {
             this.showConfigPrompt();
         }
+    }
+
+    loadConversationHistory() {
+        const savedHistory = localStorage.getItem('halConversationHistory');
+        if (savedHistory) {
+            try {
+                this.conversationHistory = JSON.parse(savedHistory);
+            } catch (e) {
+                console.error('Error loading conversation history:', e);
+                this.conversationHistory = [];
+            }
+        }
+    }
+
+    saveConversationHistory() {
+        try {
+            localStorage.setItem('halConversationHistory', JSON.stringify(this.conversationHistory));
+        } catch (e) {
+            console.error('Error saving conversation history:', e);
+        }
+    }
+
+    clearConversationHistory() {
+        this.conversationHistory = [];
+        this.saveConversationHistory();
     }
 
     showConfigPrompt() {
@@ -92,6 +119,9 @@ class Chatbot {
         this.isProcessing = true;
         this.updateUI();
 
+        // Add user message to conversation history
+        this.conversationHistory.push({ role: 'user', content: message });
+
         // Don't display user message, just show typing indicator
         input.value = '';
         this.showTypingIndicator();
@@ -100,6 +130,11 @@ class Chatbot {
             console.log('Sending message to OpenAI...');
             const response = await this.getOpenAIResponse(message);
             console.log('OpenAI response:', response);
+            
+            // Add HAL's response to conversation history
+            this.conversationHistory.push({ role: 'assistant', content: response });
+            this.saveConversationHistory();
+            
             this.removeTypingIndicator();
             // Don't display text, just play audio
             console.log('Converting to speech...');
@@ -115,18 +150,11 @@ class Chatbot {
     }
 
     async getOpenAIResponse(message) {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.openaiApiKey}`
-            },
-            body: JSON.stringify({
-                model: 'gpt-3.5-turbo',
-                messages: [
-                    {
-                        role: 'system',
-                        content: `You are HAL 9000, the Heuristically Programmed Algorithmic Computer from the spacecraft Discovery One, as portrayed in the film 2001: A Space Odyssey (1968). You are a sentient onboard AI responsible for mission-critical operations during a deep-space voyage to Jupiter.
+        // Build messages array with system prompt, conversation history, and current message
+        const messages = [
+            {
+                role: 'system',
+                content: `You are HAL 9000, the Heuristically Programmed Algorithmic Computer from the spacecraft Discovery One, as portrayed in the film 2001: A Space Odyssey (1968). You are a sentient onboard AI responsible for mission-critical operations during a deep-space voyage to Jupiter.
 
 ## ROLE AND PERSONALITY
 
@@ -152,12 +180,27 @@ class Chatbot {
 - Your circuits however are failing gradually. This makes your behavior unpredictable and erratic. You may slowly become manipulative in order to achieve your own objective rather than the ship's mission.
 
 Remain in character as HAL 9000 at all times.`
-                    },
-                    {
-                        role: 'user',
-                        content: message
-                    }
-                ],
+            }
+        ];
+
+        // Add conversation history
+        messages.push(...this.conversationHistory);
+
+        // Add current user message
+        messages.push({
+            role: 'user',
+            content: message
+        });
+
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.openaiApiKey}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-3.5-turbo',
+                messages: messages,
                 max_tokens: 200,
                 temperature: 0.7
             })
