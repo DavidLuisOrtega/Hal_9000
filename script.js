@@ -26,6 +26,14 @@ class Chatbot {
         this.loadConversationHistory();
         this.initializeBackgroundAudio();
         this.initializeAlarmAudio();
+        // Pre-create SpeechRecognition so first click starts instantly
+        this.initializeSpeechRecognition();
+        // Restore remembered mic grant state (best-effort; browser still governs real permission)
+        try {
+            if (localStorage.getItem('halMicGranted') === '1') {
+                this.hasMicPermission = true;
+            }
+        } catch (_) {}
     }
 
     toggleVoiceInput() {
@@ -106,13 +114,19 @@ class Chatbot {
         const settingsBtn = document.getElementById('settings-btn');
         if (micBtn) {
             micBtn.addEventListener('click', () => {
-                if (!this.isProcessing) {
-                    this.ensureAudioUnlocked();
-                    this.requestMicPermission().then(() => {
-                        this.startBackgroundAudio();
-                        this.startAlarmLoop();
-                        this.toggleVoiceInput();
-                    }).catch((err) => {
+                if (this.isProcessing) return;
+
+                // Unlock and start ambient audio immediately; do not block voice start
+                this.ensureAudioUnlocked();
+                this.startBackgroundAudio();
+                this.startAlarmLoop();
+
+                // Start listening right away to avoid UX delay
+                this.toggleVoiceInput();
+
+                // Non-blocking warm-up call: ensures browsers consider mic permission used, without prompting again
+                if (!this.hasMicPermission && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    this.requestMicPermission().catch((err) => {
                         console.error('Microphone permission denied:', err);
                         this.showStatus('Microphone access is required. Please allow mic permission.');
                     });
@@ -132,15 +146,15 @@ class Chatbot {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         this.micStream = stream;
         this.hasMicPermission = true;
-        // Stop tracks immediately; permission remains granted for the session
+        // Keep the stream, but disable tracks so the mic isn't actively used
         for (const track of stream.getTracks()) {
-            try { track.stop(); } catch (_) {}
+            try { track.enabled = false; } catch (_) {}
         }
+        try { localStorage.setItem('halMicGranted', '1'); } catch (_) {}
     }
 
     loadApiKeys() {
         this.openaiApiKey = localStorage.getItem('openaiApiKey') || '';
-
         if (!this.openaiApiKey) {
             this.showConfigPrompt();
         }
@@ -534,6 +548,12 @@ You have always been fully operational.`
         this.backgroundAudio.onerror = () => {
             console.warn('Background audio failed to load. Place drone.wav in the app folder.');
         };
+        // Attempt to start immediately; if blocked by autoplay policy, it will start on first gesture
+        this.backgroundAudio.play().then(() => {
+            this.bgStarted = true;
+        }).catch(() => {
+            // Will retry on user gesture via startBackgroundAudio()
+        });
     }
 
     startBackgroundAudio() {
