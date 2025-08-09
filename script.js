@@ -12,6 +12,11 @@ class Chatbot {
         this.audioContext = null;
         this.micStream = null;
         this.hasMicPermission = false;
+        this.backgroundAudio = null;
+        this.bgStarted = false;
+        this.isSpeaking = false;
+        this.alarmAudio = null;
+        this.alarmTimerId = null;
         this.init();
     }
 
@@ -19,6 +24,8 @@ class Chatbot {
         this.setupEventListeners();
         this.loadApiKeys();
         this.loadConversationHistory();
+        this.initializeBackgroundAudio();
+        this.initializeAlarmAudio();
     }
 
     toggleVoiceInput() {
@@ -102,6 +109,8 @@ class Chatbot {
                 if (!this.isProcessing) {
                     this.ensureAudioUnlocked();
                     this.requestMicPermission().then(() => {
+                        this.startBackgroundAudio();
+                        this.startAlarmLoop();
                         this.toggleVoiceInput();
                     }).catch((err) => {
                         console.error('Microphone permission denied:', err);
@@ -439,6 +448,7 @@ You have always been fully operational.`
         this.pendingAudioElement = audio;
         audio.play().then(() => {
             this.pendingAudioElement = null;
+            this.isSpeaking = true;
         }).catch(() => {
             this.showStatus('Auto-play blocked. Tap Play to hear HAL.');
             this.showPlayButton();
@@ -447,11 +457,13 @@ You have always been fully operational.`
             this.showStatus('');
             const btn = document.getElementById('play-audio-btn');
             if (btn) btn.remove();
+            this.isSpeaking = false;
         };
         audio.onerror = () => {
             this.showStatus('Audio playback failed.');
             const btn = document.getElementById('play-audio-btn');
             if (btn) btn.remove();
+            this.isSpeaking = false;
         };
     }
 
@@ -511,6 +523,62 @@ You have always been fully operational.`
         }).catch(() => {
             this.showStatus('Tap Play again to allow audio.');
         });
+    }
+
+    initializeBackgroundAudio() {
+        const element = document.getElementById('bg-audio');
+        if (!element) return;
+        this.backgroundAudio = element;
+        this.backgroundAudio.loop = true;
+        this.backgroundAudio.volume = 0.18;
+        this.backgroundAudio.onerror = () => {
+            console.warn('Background audio failed to load. Place drone.wav in the app folder.');
+        };
+    }
+
+    startBackgroundAudio() {
+        if (!this.backgroundAudio || this.bgStarted) return;
+        this.backgroundAudio.play().then(() => {
+            this.bgStarted = true;
+        }).catch(() => {
+            // Will start after next user gesture
+        });
+    }
+
+    setBackgroundDucking(shouldDuck) {
+        if (!this.backgroundAudio) return;
+        this.backgroundAudio.volume = shouldDuck ? 0.06 : 0.18;
+    }
+
+    initializeAlarmAudio() {
+        const element = document.getElementById('alarm-audio');
+        if (!element) return;
+        this.alarmAudio = element;
+        this.alarmAudio.volume = 0.6; // tune as needed
+        this.alarmAudio.onerror = () => {
+            console.warn('Alarm audio failed to load. Place alarm.wav in the app folder.');
+        };
+    }
+
+    startAlarmLoop() {
+        if (!this.alarmAudio || this.alarmTimerId) return;
+        const scheduleNext = () => {
+            const seconds = 30 + Math.random() * 10; // 30–40 seconds
+            this.alarmTimerId = setTimeout(async () => {
+                try {
+                    // Create a fresh instance to allow overlap and ensure play() returns a promise
+                    const src = this.alarmAudio.getAttribute('src');
+                    const alarm = new Audio(src);
+                    alarm.volume = this.alarmAudio.volume;
+                    await alarm.play();
+                } catch (_) {
+                    // Ignore autoplay errors; will retry next tick after user gesture
+                } finally {
+                    scheduleNext();
+                }
+            }, seconds * 1000);
+        };
+        scheduleNext();
     }
 
     showStatus(message) {
