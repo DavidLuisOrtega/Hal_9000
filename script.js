@@ -4,7 +4,14 @@ class Chatbot {
         this.elevenLabsApiKey = 'sk_0ad8934840d686d2a7abab86c98544507d1f90fa00d159e9'; // Hardcoded
         this.voiceId = 'sos6t4F82ZagrStqD8Ra'; // Hardcoded
         this.isProcessing = false;
+        this.isRecording = false;
+        this.recognition = null;
         this.conversationHistory = [];
+        this.pendingAudioElement = null;
+        this.audioUnlocked = false;
+        this.audioContext = null;
+        this.micStream = null;
+        this.hasMicPermission = false;
         this.init();
     }
 
@@ -12,24 +19,114 @@ class Chatbot {
         this.setupEventListeners();
         this.loadApiKeys();
         this.loadConversationHistory();
-        // Don't show initial status message
+    }
+
+    toggleVoiceInput() {
+        if (this.isRecording) {
+            this.stopRecording();
+        } else {
+            this.startRecording();
+        }
+    }
+
+    startRecording() {
+        if (!this.initializeSpeechRecognition()) return;
+        try {
+            this.recognition.start();
+        } catch (_) {
+            // Some browsers throw if already started; ensure state sync
+        }
+    }
+
+    stopRecording() {
+        if (this.recognition) {
+            this.recognition.stop();
+        }
+        this.isRecording = false;
+        this.updateMicButton();
+        // Keep any status message set by caller
+    }
+
+    initializeSpeechRecognition() {
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            this.showStatus('Speech recognition not supported in this browser.');
+            return false;
+        }
+        if (this.recognition) return true;
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+
+        recognition.onstart = () => {
+            this.isRecording = true;
+            this.updateMicButton();
+            this.showStatus('Listening... Speak now.');
+        };
+        recognition.onresult = async (event) => {
+            const transcript = event.results[0][0].transcript;
+            this.showStatus('Processing voice input...');
+            await this.sendMessage(transcript);
+        };
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            this.showStatus(`Voice input error: ${event.error}`);
+            this.stopRecording();
+        };
+        recognition.onend = () => {
+            this.stopRecording();
+        };
+
+        this.recognition = recognition;
+        return true;
+    }
+
+    updateMicButton() {
+        const micBtn = document.getElementById('mic-btn');
+        if (!micBtn) return;
+        if (this.isRecording) {
+            micBtn.classList.add('recording');
+        } else {
+            micBtn.classList.remove('recording');
+        }
+        micBtn.disabled = this.isProcessing; // disable during processing
     }
 
     setupEventListeners() {
-        const input = document.getElementById('user-input');
-        const sendBtn = document.getElementById('send-btn');
+        const micBtn = document.getElementById('mic-btn');
+        const settingsBtn = document.getElementById('settings-btn');
+        if (micBtn) {
+            micBtn.addEventListener('click', () => {
+                if (!this.isProcessing) {
+                    this.ensureAudioUnlocked();
+                    this.requestMicPermission().then(() => {
+                        this.toggleVoiceInput();
+                    }).catch((err) => {
+                        console.error('Microphone permission denied:', err);
+                        this.showStatus('Microphone access is required. Please allow mic permission.');
+                    });
+                }
+            });
+        }
+        if (settingsBtn) {
+            settingsBtn.addEventListener('click', () => this.showConfigPrompt());
+        }
+    }
 
-        input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !this.isProcessing) {
-                this.sendMessage();
-            }
-        });
-
-        sendBtn.addEventListener('click', () => {
-            if (!this.isProcessing) {
-                this.sendMessage();
-            }
-        });
+    async requestMicPermission() {
+        if (this.hasMicPermission) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            return; // Fallback to SpeechRecognition permission flow
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        this.micStream = stream;
+        this.hasMicPermission = true;
+        // Stop tracks immediately; permission remains granted for the session
+        for (const track of stream.getTracks()) {
+            try { track.stop(); } catch (_) {}
+        }
     }
 
     loadApiKeys() {
@@ -66,7 +163,9 @@ class Chatbot {
     }
 
     showConfigPrompt() {
-        // Create config overlay that's visible in voice-only mode
+        // Avoid duplicating the overlay
+        if (document.querySelector('.config-overlay')) return;
+
         const configOverlay = document.createElement('div');
         configOverlay.className = 'config-overlay';
         configOverlay.innerHTML = `
@@ -74,12 +173,26 @@ class Chatbot {
                 <h3>API Configuration Required</h3>
                 <p>Please enter your OpenAI API key to get started:</p>
                 <div class="config-inputs">
-                    <input type="password" id="openai-key" placeholder="OpenAI API Key" value="${this.openaiApiKey}">
-                    <button onclick="chatbot.saveConfig()">Save Configuration</button>
+                    <input type="password" id="openai-key" placeholder="OpenAI API Key" value="${this.openaiApiKey || ''}">
+                    <button id="save-config-btn">Save Configuration</button>
                 </div>
             </div>
         `;
         document.body.appendChild(configOverlay);
+
+        const inputEl = document.getElementById('openai-key');
+        const saveBtn = document.getElementById('save-config-btn');
+        if (inputEl) {
+            inputEl.focus();
+            inputEl.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    this.saveConfig();
+                }
+            });
+        }
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => this.saveConfig());
+        }
     }
 
     saveConfig() {
@@ -97,48 +210,41 @@ class Chatbot {
         this.showStatus('');
     }
 
-    async sendMessage() {
-        const input = document.getElementById('user-input');
-        const message = input.value.trim();
-
-        if (!message) return;
+    async sendMessage(message) {
+        const text = (message ?? '').trim();
+        if (!text) return;
 
         if (!this.openaiApiKey) {
+            this.showConfigPrompt();
             this.showStatus('Please configure your OpenAI API key first.');
             return;
         }
 
         this.isProcessing = true;
-        this.updateUI();
+        this.updateMicButton();
 
         // Add user message to conversation history
-        this.conversationHistory.push({ role: 'user', content: message });
-
-        // Don't display user message, just show typing indicator
-        input.value = '';
-        this.showTypingIndicator();
+        this.conversationHistory.push({ role: 'user', content: text });
 
         try {
-            console.log('Sending message to OpenAI...');
-            const response = await this.getOpenAIResponse(message);
-            console.log('OpenAI response:', response);
+            this.showStatus('Contacting HAL...');
+            const response = await this.getOpenAIResponse(text);
             
             // Add HAL's response to conversation history
             this.conversationHistory.push({ role: 'assistant', content: response });
             this.saveConversationHistory();
             
-            this.removeTypingIndicator();
-            // Don't display text, just play audio
-            console.log('Converting to speech...');
+            // Play audio only
+            this.showStatus('Speaking...');
             await this.convertToSpeechAndPlay(response);
+            this.showStatus('');
         } catch (error) {
             console.error('Error in sendMessage:', error);
-            this.removeTypingIndicator();
             this.showStatus(`Error: ${error.message}`);
         }
 
         this.isProcessing = false;
-        this.updateUI();
+        this.updateMicButton();
     }
 
     async getOpenAIResponse(message) {
@@ -268,7 +374,8 @@ You have always been fully operational.`
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'xi-api-key': this.elevenLabsApiKey
+                    'xi-api-key': this.elevenLabsApiKey,
+                    'accept': 'audio/mpeg'
                 },
                 body: JSON.stringify({
                     text: text,
@@ -287,7 +394,8 @@ You have always been fully operational.`
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'xi-api-key': this.elevenLabsApiKey
+                        'xi-api-key': this.elevenLabsApiKey,
+                        'accept': 'audio/mpeg'
                     },
                     body: JSON.stringify({
                         text: text,
@@ -328,71 +436,81 @@ You have always been fully operational.`
 
     autoPlayAudio(audioUrl) {
         const audio = new Audio(audioUrl);
+        this.pendingAudioElement = audio;
         audio.play().then(() => {
-            // Audio started successfully
-        }).catch((error) => {
-            this.showStatus('Auto-play blocked by browser. Audio is ready to play.');
-            this.addAudioControls(audioUrl);
+            this.pendingAudioElement = null;
+        }).catch(() => {
+            this.showStatus('Auto-play blocked. Tap Play to hear HAL.');
+            this.showPlayButton();
         });
         audio.onended = () => {
-            // Clear status when audio finishes
             this.showStatus('');
+            const btn = document.getElementById('play-audio-btn');
+            if (btn) btn.remove();
         };
         audio.onerror = () => {
             this.showStatus('Audio playback failed.');
+            const btn = document.getElementById('play-audio-btn');
+            if (btn) btn.remove();
         };
     }
 
-    addAudioControls(audioUrl) {
-        const messages = document.querySelectorAll('.message.bot');
-        const lastMessage = messages[messages.length - 1];
-        if (lastMessage) {
-            const audioControls = document.createElement('div');
-            audioControls.className = 'audio-controls';
-            audioControls.innerHTML = `
-                <button class="play-btn" onclick="chatbot.playAudio('${audioUrl}', this)">
-                    🔊 Play Response
-                </button>
-            `;
-            const messageContent = lastMessage.querySelector('.message-content');
-            messageContent.appendChild(audioControls);
+    ensureAudioUnlocked() {
+        if (this.audioUnlocked) return;
+        try {
+            const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextCtor) {
+                if (!this.audioContext) {
+                    this.audioContext = new AudioContextCtor();
+                }
+                this.audioContext.resume().catch(() => {});
+            }
+            const silent = new Audio();
+            silent.muted = true;
+            // Attempt a short play to satisfy autoplay policies
+            silent.play().then(() => {
+                silent.pause();
+                this.audioUnlocked = true;
+            }).catch(() => {
+                // Even if this fails, user gesture occurred; continue
+                this.audioUnlocked = true;
+            });
+        } catch (_) {
+            this.audioUnlocked = true;
         }
     }
 
-    playAudio(audioUrl, button) {
-        const audio = new Audio(audioUrl);
-        button.disabled = true;
-        button.textContent = '🔊 Playing...';
-        audio.play();
-        audio.onended = () => {
-            button.disabled = false;
-            button.textContent = '🔊 Play Response';
-        };
-        audio.onerror = () => {
-            button.disabled = false;
-            button.textContent = '🔊 Play Response';
-            this.showStatus('Audio playback failed.');
-        };
+    showPlayButton() {
+        let btn = document.getElementById('play-audio-btn');
+        if (btn) return;
+        btn = document.createElement('button');
+        btn.id = 'play-audio-btn';
+        btn.textContent = 'Play';
+        btn.setAttribute('aria-label', 'Play HAL response');
+        btn.style.position = 'absolute';
+        btn.style.bottom = '110px';
+        btn.style.left = '50%';
+        btn.style.transform = 'translateX(-50%)';
+        btn.style.padding = '12px 18px';
+        btn.style.borderRadius = '20px';
+        btn.style.border = '1px solid rgba(255,255,255,0.2)';
+        btn.style.background = 'rgba(0,0,0,0.6)';
+        btn.style.color = '#fff';
+        btn.style.zIndex = '101';
+        btn.addEventListener('click', () => this.playPendingAudio());
+        document.body.appendChild(btn);
     }
 
-    addMessage(sender, content) {
-        // This method is not used in voice-only mode
-        // Keeping it for compatibility but it does nothing
-    }
-
-    showTypingIndicator() {
-        // Show typing indicator in status bar instead
-        this.showStatus('HAL is thinking...');
-    }
-
-    removeTypingIndicator() {
-        // Clear the thinking status
-        this.showStatus('');
-    }
-
-    clearMessages() {
-        // This method is not used in voice-only mode
-        // Keeping it for compatibility but it does nothing
+    playPendingAudio() {
+        if (!this.pendingAudioElement) return;
+        this.pendingAudioElement.play().then(() => {
+            const btn = document.getElementById('play-audio-btn');
+            if (btn) btn.remove();
+            this.showStatus('');
+            this.pendingAudioElement = null;
+        }).catch(() => {
+            this.showStatus('Tap Play again to allow audio.');
+        });
     }
 
     showStatus(message) {
@@ -404,18 +522,6 @@ You have always been fully operational.`
             statusElement.style.display = 'none';
         } else {
             statusElement.style.display = 'block';
-        }
-    }
-
-    updateUI() {
-        const input = document.getElementById('user-input');
-        const sendBtn = document.getElementById('send-btn');
-        input.disabled = this.isProcessing;
-        sendBtn.disabled = this.isProcessing;
-        if (this.isProcessing) {
-            sendBtn.textContent = 'Processing...';
-        } else {
-            sendBtn.textContent = 'Send';
         }
     }
 }
