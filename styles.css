@@ -55,10 +55,11 @@ body {
     transform: translateX(-50%);
     width: auto;
     display: flex;
-    gap: 10px;
+    align-items: center;
+    justify-content: center;
     background: rgba(0, 0, 0, 0.5);
-    padding: 14px; /* reverted */
-    border-radius: 34px; /* reverted */
+    padding: 14px;
+    border-radius: 34px;
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.2);
     z-index: 100;
@@ -142,23 +143,7 @@ body {
     background: #666;
 }
 
-/* Settings button */
-.settings-button {
-    width: 48px;
-    height: 48px;
-    margin-left: 8px;
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 12px;
-    background: rgba(0,0,0,0.5);
-    color: #fff;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform 0.2s ease;
-}
-.settings-button:hover { transform: scale(1.05); }
-.settings-button:active { transform: scale(0.95); }
+/* Settings button removed */
 
 /* Config overlay */
 .config-overlay {
