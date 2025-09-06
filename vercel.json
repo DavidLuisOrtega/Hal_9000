@@ -1,19 +1,10 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "server.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/server.js"
+  "functions": {
+    "api/chat.js": {
+      "runtime": "@vercel/node@18"
     },
-    {
-      "src": "/(.*)",
-      "dest": "/$1"
+    "api/health.js": {
+      "runtime": "@vercel/node@18"
     }
-  ]
+  }
 }
