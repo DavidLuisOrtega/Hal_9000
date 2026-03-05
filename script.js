@@ -1,7 +1,7 @@
 class Chatbot {
     constructor() {
         this.openaiApiKey = '';
-        this.elevenLabsApiKey = 'sk_0ad8934840d686d2a7abab86c98544507d1f90fa00d159e9'; // Hardcoded
+        this.elevenLabsApiKey = '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'; // Hardcoded
         this.voiceId = 'sos6t4F82ZagrStqD8Ra'; // Hardcoded
         this.isProcessing = false;
         this.isRecording = false;
